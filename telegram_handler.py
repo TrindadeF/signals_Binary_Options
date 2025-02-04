@@ -1,6 +1,7 @@
+from asyncio.log import logger
 from telethon import events
 import re
-from datetime import datetime
+from datetime import datetime, timedelta
 import asyncio
 
 class TelegramHandler:
@@ -10,49 +11,40 @@ class TelegramHandler:
 
     async def handle_message(self, event):
         message = event.message.message
-        print(f"Mensagem recebida: {message}")
+        logger.info(f"📩 Mensagem recebida: {message}")
 
-        ativo_pattern = re.compile(r"ATIVO:\s*([\w-]+)")
-        horario_pattern = re.compile(r"HORÁRIO:\s*(\d{2}:\d{2}:\d{2})")
-        direcao_pattern = re.compile(r"DIREÇÃO:\s*(\w+)")
-        expiracao_pattern = re.compile(r"EXPIRAÇÃO:\s*(\d+)M")
+        ativo_match = re.search(r"ATIVO:\s*([\w-]+)", message)
+        horario_match = re.search(r"HORÁRIO:\s*(\d{2}:\d{2}:\d{2})", message)
+        direcao_match = re.search(r"DIREÇÃO:\s*(\w+)", message)
+        expiracao_match = re.search(r"EXPIRAÇÃO:\s*(\d+)M", message)
 
-        ativo_match = ativo_pattern.search(message)
-        horario_match = horario_pattern.search(message)
-        direcao_match = direcao_pattern.search(message)
-        expiracao_match = expiracao_pattern.search(message)
+        if not (ativo_match and horario_match and direcao_match and expiracao_match):
+            logger.error("❌ Erro: Não foi possível extrair todas as informações da mensagem.")
+            return
 
-        if ativo_match and horario_match and direcao_match and expiracao_match:
-            ativo = ativo_match.group(1)
-            horario = horario_match.group(1)
-            direcao = direcao_match.group(1)
-            expiracao = int(expiracao_match.group(1))
+        ativo = ativo_match.group(1)
+        horario = horario_match.group(1)
+        direcao = direcao_match.group(1)
+        expiracao = int(expiracao_match.group(1))
 
-            print(f"Detalhes da Mensagem Extraídos:")
-            print(f"  Ativo: {ativo}")
-            print(f"  Horário: {horario}")
-            print(f"  Direção: {direcao}")
-            print(f"  Expiração: {expiracao}M")
+        logger.info(f"📌 Detalhes extraídos: Ativo={ativo}, Horário={horario}, Direção={direcao}, Expiração={expiracao}M")
 
-            horario_atual = datetime.now()
-            horario_ordem = datetime.strptime(horario, "%H:%M:%S").replace(
-                year=horario_atual.year,
-                month=horario_atual.month,
-                day=horario_atual.day
-            )
+        horario_atual = datetime.now()
+        horario_ordem = datetime.strptime(horario, "%H:%M:%S").replace(
+            year=datetime.now().year,
+            month=datetime.now().month,
+            day=datetime.now().day
+        )
 
-            if horario_ordem < horario_atual:
-                print("Horário da mensagem já passou. Ordem não enviada.")
-                return
+        if horario_ordem < horario_atual:
+            logger.warning("⚠️ Horário da mensagem já passou. Ordem não será enviada.")
+            return
 
-            tempo_espera = (horario_ordem - horario_atual).total_seconds()
-            print(f"Aguardando {tempo_espera:.2f} segundos até o horário da ordem...")
-            await asyncio.sleep(tempo_espera)
+        tempo_espera = (horario_ordem - horario_atual).total_seconds()
 
-            print("Enviando ordem para a corretora...")
-            await self.iq_handler.execute_order(ativo, direcao, expiracao)
-        else:
-            print("Não foi possível extrair todas as informações da mensagem.")
+        logger.info(f"⏳ Aguardando {tempo_espera:.2f} segundos até o horário da ordem...")
+        await self.iq_handler.process_trade_signal(ativo, direcao, expiracao, horario_ordem)
+
 
     async def start(self):
         print("Iniciando cliente Telethon...")
